@@ -68,8 +68,10 @@ echo -e "   Run #${RUN_ID} — suivi : https://github.com/$REPO/actions/runs/$RU
 gh run watch "$RUN_ID" --exit-status || echo -e "${YELLOW}⚠️  Le run s'est terminé en échec — tentative de récupération des artifacts partiels.${NC}"
 
 echo -e "${CYAN}📦 Récupération du résultat dans ./output ...${NC}"
+# gh run download refuse d'écraser : on supprime les anciens résultats d'abord
+rm -f output/transcript.* output/translation_*.txt output/bilingual.html
 gh run download "$RUN_ID" -n "transcription-$RUN_ID" --dir output \
   && echo -e "${GREEN}✅ Résultat récupéré dans ./output/${NC}" \
-  || echo -e "${RED}❌ Aucun artifact à télécharger (le run a probablement échoué tôt).${NC}"
+  || echo -e "${RED}❌ Échec du téléchargement de l'artifact (voir le run sur GitHub).${NC}"
 
 ls -lh output/transcript.* output/translation_*.txt output/bilingual.html 2>/dev/null || true
