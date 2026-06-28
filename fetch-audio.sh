@@ -15,13 +15,14 @@ if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
 fi
 
 URL="$1"; shift
-MODEL=medium; LANG=ar; TARGET=fr; ENGINE=deepl
+MODEL=medium; LANG=ar; TARGET=fr; ENGINE=deepl; WAIT=true
 while [ $# -gt 0 ]; do
   case "$1" in
-    --model)  MODEL="$2";  shift 2 ;;
-    --lang)   LANG="$2";   shift 2 ;;
-    --target) TARGET="$2"; shift 2 ;;
-    --engine) ENGINE="$2"; shift 2 ;;
+    --model)   MODEL="$2";  shift 2 ;;
+    --lang)    LANG="$2";   shift 2 ;;
+    --target)  TARGET="$2"; shift 2 ;;
+    --engine)  ENGINE="$2"; shift 2 ;;
+    --no-wait) WAIT=false;  shift ;;   # ne pas attendre/récupérer le résultat
     *) echo -e "${RED}Option inconnue : $1${NC}"; exit 1 ;;
   esac
 done
@@ -52,8 +53,23 @@ gh workflow run transcribe-audio.yml \
   -f target_lang="$TARGET" \
   -f engine="$ENGINE"
 
-echo ""
-echo -e "${GREEN}✅ Pipeline lancé sur GitHub.${NC}"
-echo -e "   Suivi  : https://github.com/$REPO/actions"
-echo -e "   CLI    : ${YELLOW}gh run watch${NC}"
-echo -e "   Résultat : onglet Actions → run → section ${YELLOW}Artifacts${NC}"
+if [ "$WAIT" = false ]; then
+  echo -e "${GREEN}✅ Pipeline lancé.${NC} Suivi : https://github.com/$REPO/actions"
+  exit 0
+fi
+
+# Récupérer l'ID du run qui vient d'être déclenché
+echo -e "${CYAN}⏳ Attente du démarrage du run...${NC}"
+sleep 6
+RUN_ID=$(gh run list --workflow transcribe-audio.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+echo -e "   Run #${RUN_ID} — suivi : https://github.com/$REPO/actions/runs/$RUN_ID"
+
+# Attendre la fin (n'échoue pas le script si le run échoue : artifact en if:always())
+gh run watch "$RUN_ID" --exit-status || echo -e "${YELLOW}⚠️  Le run s'est terminé en échec — tentative de récupération des artifacts partiels.${NC}"
+
+echo -e "${CYAN}📦 Récupération du résultat dans ./output ...${NC}"
+gh run download "$RUN_ID" -n "transcription-$RUN_ID" --dir output \
+  && echo -e "${GREEN}✅ Résultat récupéré dans ./output/${NC}" \
+  || echo -e "${RED}❌ Aucun artifact à télécharger (le run a probablement échoué tôt).${NC}"
+
+ls -lh output/transcript.* output/translation_*.txt output/bilingual.html 2>/dev/null || true
