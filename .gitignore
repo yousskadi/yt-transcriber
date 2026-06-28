@@ -1,0 +1,14 @@
+# Secrets — NE JAMAIS committer
+.env
+.env.local
+
+# Sorties générées
+output/
+lt_models/
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code (local)
+.claude/settings.local.json
