@@ -1,19 +1,23 @@
 # ============================================================
 #  YouTube → Transcription → Traduction Pipeline
 # ============================================================
+#  Utilise une image dédiée (voir Dockerfile) : ffmpeg + deps
+#  préinstallés → runs rapides. L'image est construite au premier
+#  lancement puis réutilisée. Le cache des modèles Whisper est
+#  persisté dans le volume `whisper_cache` (téléchargement unique).
+#
 #  Usage :
+#    docker compose run --rm pipeline     ← tout en une commande
 #    docker compose run --rm transcribe
 #    docker compose run --rm translate
-#    docker compose run --rm pipeline   ← tout en une commande
 # ============================================================
 
 services:
 
-  # -----------------------------------------------------------
   # 1. TÉLÉCHARGEMENT AUDIO (yt-dlp)
-  # -----------------------------------------------------------
   downloader:
-    image: python:3.11-slim
+    image: yt-transcriber:local
+    build: .
     container_name: yt_downloader
     working_dir: /app
     volumes:
@@ -25,40 +29,33 @@ services:
       - AUDIO_QUALITY=${AUDIO_QUALITY:-192}
     command: >
       bash -c "
-        apt-get update -qq && apt-get install -y -qq ffmpeg &&
-        pip install yt-dlp -q &&
         echo '📥 Téléchargement de : ${YOUTUBE_URL}' &&
         yt-dlp -x --audio-format ${AUDIO_FORMAT:-mp3} --audio-quality ${AUDIO_QUALITY:-192}K --output '/output/audio.%(ext)s' --no-playlist '${YOUTUBE_URL}' &&
         echo '✅ Audio téléchargé dans /output/'
       "
 
-  # -----------------------------------------------------------
-  # 2. TRANSCRIPTION (Whisper via faster-whisper)
-  # -----------------------------------------------------------
+  # 2. TRANSCRIPTION (faster-whisper)
   transcribe:
-    image: python:3.11-slim
+    image: yt-transcriber:local
+    build: .
     container_name: yt_transcribe
     working_dir: /app
     volumes:
       - ./output:/output
       - ./scripts:/scripts
+      - whisper_cache:/root/.cache/huggingface
     environment:
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
       - SOURCE_LANGUAGE=${SOURCE_LANGUAGE:-ar}
       - OUTPUT_FORMAT=${OUTPUT_FORMAT:-txt}
-    command: >
-      bash -c "
-        pip install faster-whisper -q &&
-        python /scripts/transcribe.py
-      "
+    command: python /scripts/transcribe.py
     depends_on:
       - downloader
 
-  # -----------------------------------------------------------
-  # 3. TRADUCTION (via API DeepL ou LibreTranslate)
-  # -----------------------------------------------------------
+  # 3. TRADUCTION (Claude / DeepL / LibreTranslate)
   translate:
-    image: python:3.11-slim
+    image: yt-transcriber:local
+    build: .
     container_name: yt_translate
     working_dir: /app
     volumes:
@@ -72,30 +69,27 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-opus-4-8}
       - LIBRETRANSLATE_URL=${LIBRETRANSLATE_URL:-http://libretranslate:5000}
-    command: >
-      bash -c "
-        pip install requests deepl anthropic -q &&
-        python /scripts/translate.py
-      "
+    command: python /scripts/translate.py
     depends_on:
       - libretranslate
 
-  # -----------------------------------------------------------
   # 4. PIPELINE COMPLET (download → transcribe → translate)
-  # -----------------------------------------------------------
   pipeline:
-    image: python:3.11-slim
+    image: yt-transcriber:local
+    build: .
     container_name: yt_pipeline
     working_dir: /app
     volumes:
       - ./output:/output
       - ./scripts:/scripts
+      - whisper_cache:/root/.cache/huggingface
     environment:
       - YOUTUBE_URL=${YOUTUBE_URL}
       - AUDIO_FORMAT=${AUDIO_FORMAT:-mp3}
       - AUDIO_QUALITY=${AUDIO_QUALITY:-192}
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
       - SOURCE_LANGUAGE=${SOURCE_LANGUAGE:-ar}
+      - SOURCE_LANG=${SOURCE_LANGUAGE:-ar}
       - TARGET_LANG=${TARGET_LANG:-fr}
       - OUTPUT_FORMAT=${OUTPUT_FORMAT:-txt}
       - TRANSLATE_ENGINE=${TRANSLATE_ENGINE:-libretranslate}
@@ -105,35 +99,23 @@ services:
       - LIBRETRANSLATE_URL=${LIBRETRANSLATE_URL:-http://libretranslate:5000}
     command: >
       bash -c "
-        apt-get update -qq && apt-get install -y -qq ffmpeg &&
-        pip install yt-dlp faster-whisper requests deepl anthropic -q &&
-        echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' &&
-        echo '📥 ÉTAPE 1/3 — Téléchargement audio...' &&
-        echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' &&
+        echo '━━━━━━━━━━ ÉTAPE 1/3 — Téléchargement audio ━━━━━━━━━━' &&
         yt-dlp -x --audio-format ${AUDIO_FORMAT:-mp3} --audio-quality ${AUDIO_QUALITY:-192}K --output '/output/audio.%(ext)s' --no-playlist '${YOUTUBE_URL}' &&
-        echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' &&
-        echo '🎙️  ÉTAPE 2/3 — Transcription Whisper...' &&
-        echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' &&
+        echo '━━━━━━━━━━ ÉTAPE 2/3 — Transcription Whisper ━━━━━━━━━━' &&
         python /scripts/transcribe.py &&
-        echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' &&
-        echo '🌍 ÉTAPE 3/3 — Traduction...' &&
-        echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' &&
+        echo '━━━━━━━━━━ ÉTAPE 3/3 — Traduction ━━━━━━━━━━' &&
         python /scripts/translate.py &&
         echo '✅ Pipeline terminé ! Fichiers dans ./output/'
       "
-    # Pas de depends_on libretranslate : il n'est requis que si
-    # TRANSLATE_ENGINE=libretranslate (run.sh le démarre alors au besoin).
 
-  # -----------------------------------------------------------
-  # 5. LIBRETRANSLATE (moteur de traduction self-hosted, gratuit)
-  # -----------------------------------------------------------
+  # 5. LIBRETRANSLATE (moteur self-hosted, gratuit)
   libretranslate:
     image: libretranslate/libretranslate:latest
     container_name: libretranslate
     ports:
       - "${LIBRETRANSLATE_PORT:-5000}:5000"
     environment:
-      - LT_LOAD_ONLY=${LT_LOAD_ONLY:-ar,fr,en}   # Langues chargées au démarrage
+      - LT_LOAD_ONLY=${LT_LOAD_ONLY:-ar,fr,en}
       - LT_THREADS=${LT_THREADS:-4}
     volumes:
       - ./lt_models:/home/libretranslate/.local/share/argos-translate
@@ -143,4 +125,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 60s   # Laisse le temps de télécharger les modèles
+      start_period: 60s
+
+volumes:
+  whisper_cache:

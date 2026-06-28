@@ -1,0 +1,10 @@
+.git
+.github
+.env
+.env.local
+output/
+lt_models/
+__pycache__/
+*.pyc
+.claude/
+README.md

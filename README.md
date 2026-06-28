@@ -73,9 +73,14 @@ Génère `output/bilingual.html` (un paragraphe source suivi de sa traduction, m
 forme RTL/LTR, imprimable en PDF via `Ctrl+P` dans le navigateur) :
 
 ```bash
-docker compose run --rm --no-deps translate \
-  bash -c "pip install deepl -q && python /scripts/bilingual.py"
+docker compose run --rm --no-deps translate python /scripts/bilingual.py
 ```
+
+> **Performance** : une image Docker dédiée (voir `Dockerfile`) préinstalle `ffmpeg`
+> et toutes les dépendances. Elle est construite **au premier lancement** puis
+> réutilisée (runs suivants bien plus rapides). Les modèles Whisper sont mis en cache
+> dans le volume `whisper_cache` → téléchargés une seule fois. Pour (re)construire
+> manuellement : `docker compose build`.
 
 ---
 
@@ -160,6 +165,7 @@ gh run watch
 - **Arabe littéraire / religieux** : `--model medium --engine claude` donne le meilleur
   résultat (Claude corrige les erreurs de transcription par le contexte).
 - **Gratuit et bon** : `--model medium --engine deepl`.
-- Les modèles Whisper se téléchargent dans des conteneurs jetables (`--rm`) : **rien ne
-  s'accumule** sur le disque (ni en local, ni en CI).
+- Le modèle Whisper est mis en cache dans le volume `whisper_cache` (téléchargé une
+  seule fois en local). En CI ce cache est éphémère. Pour tout libérer :
+  `docker compose down -v` (supprime le cache) et `rm -f output/*`.
 - Filtre VAD (silences) activé par défaut côté transcription.

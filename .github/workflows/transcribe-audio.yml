@@ -60,6 +60,9 @@ jobs:
           LT_THREADS=4
           EOF
 
+      - name: Construit l'image (ffmpeg + deps, partagée par les étapes)
+        run: docker compose build
+
       - name: Récupère l'audio
         run: |
           mkdir -p output
@@ -78,7 +81,7 @@ jobs:
 
       - name: Génère le HTML bilingue (DeepL uniquement)
         if: ${{ inputs.engine == 'deepl' }}
-        run: docker compose run --rm --no-deps translate bash -c "pip install deepl -q && python /scripts/bilingual.py"
+        run: docker compose run --rm --no-deps translate python /scripts/bilingual.py
 
       - name: Publie les résultats en artifact
         if: always()
