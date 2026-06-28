@@ -1,0 +1,93 @@
+name: 🎧 Transcription (audio fourni)
+
+# Mode HYBRIDE : l'audio est téléchargé en local (pas de blocage YouTube),
+# puis fourni ici via une URL directe (asset de release). La CI ne fait que
+# le travail lourd : transcription + traduction.
+on:
+  workflow_dispatch:
+    inputs:
+      audio_url:
+        description: "URL directe du fichier audio (ex: asset de release GitHub)"
+        required: true
+        type: string
+      model:
+        description: "Modèle Whisper (medium recommandé ; large = risque OOM)"
+        required: true
+        default: medium
+        type: choice
+        options: [tiny, base, small, medium]
+      source_language:
+        description: "Langue source (code ISO, ex: ar)"
+        required: true
+        default: ar
+        type: string
+      target_lang:
+        description: "Langue cible (ex: fr)"
+        required: true
+        default: fr
+        type: string
+      engine:
+        description: "Moteur de traduction"
+        required: true
+        default: deepl
+        type: choice
+        options: [deepl, claude, libretranslate]
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Génère le .env depuis les inputs + secrets
+        run: |
+          cat > .env <<EOF
+          AUDIO_FORMAT=mp3
+          AUDIO_QUALITY=192
+          WHISPER_MODEL=${{ inputs.model }}
+          SOURCE_LANGUAGE=${{ inputs.source_language }}
+          OUTPUT_FORMAT=txt
+          TARGET_LANG=${{ inputs.target_lang }}
+          TRANSLATE_ENGINE=${{ inputs.engine }}
+          DEEPL_API_KEY=${{ secrets.DEEPL_API_KEY }}
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL=claude-opus-4-8
+          LIBRETRANSLATE_URL=http://libretranslate:5000
+          LIBRETRANSLATE_PORT=5000
+          LT_LOAD_ONLY=${{ inputs.source_language }},${{ inputs.target_lang }},en
+          LT_THREADS=4
+          EOF
+
+      - name: Récupère l'audio
+        run: |
+          mkdir -p output
+          curl -L --fail --retry 3 -o output/audio.mp3 "${{ inputs.audio_url }}"
+          ls -lh output/audio.mp3
+
+      - name: Transcription (Whisper)
+        run: docker compose run --rm --no-deps transcribe
+
+      - name: Démarre LibreTranslate (si engine=libretranslate)
+        if: ${{ inputs.engine == 'libretranslate' }}
+        run: docker compose up -d libretranslate
+
+      - name: Traduction
+        run: docker compose run --rm --no-deps translate
+
+      - name: Génère le HTML bilingue (DeepL uniquement)
+        if: ${{ inputs.engine == 'deepl' }}
+        run: docker compose run --rm --no-deps translate bash -c "pip install deepl -q && python /scripts/bilingual.py"
+
+      - name: Publie les résultats en artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcription-${{ github.run_id }}
+          path: |
+            output/transcript.*
+            output/translation_*.txt
+            output/bilingual.html
+          if-no-files-found: warn
+          retention-days: 30
